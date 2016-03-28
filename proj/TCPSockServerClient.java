@@ -2,7 +2,11 @@ import java.nio.*;
 
 public class TCPSockServerClient {
     private Segment.Buffer segmentBuffer = new Segment.Buffer();
-    private ByteBuffer readBuffer = ByteBuffer.allocate(0x400);
+    private ByteBuffer readBuffer;
+
+    public TCPSockServerClient(int bufferSize) {
+        readBuffer = ByteBuffer.allocate(bufferSize);
+    }
 
     // Segment buffer functions.
     public void bufferSegment(int seqNum, byte[] payload) {
@@ -32,8 +36,6 @@ public class TCPSockServerClient {
                 byteCount += segment.getPayloadSize();
                 readBuffer.put(segment.getPayload());
                 lastSegment = segmentBuffer.poll();
-
-                System.out.println("Unloaded: " + Utility.byteArrayToString(segment.getPayload()));
             } else break;
         }
 
@@ -44,7 +46,7 @@ public class TCPSockServerClient {
         readBuffer.flip();
         int bytesRead = Math.min(readBuffer.remaining(), len);
         readBuffer.get(buf, pos, bytesRead);
-        readBuffer.flip();
+        readBuffer.compact();
 
         return bytesRead;
     }

@@ -1,6 +1,9 @@
 public class TCPSock {
     public static final byte dummy[] = new byte[0];
 
+    private static final int WINDOW_SIZE = 0x2000;
+    private static final int READ_BUFFER_SIZE = 0x4000;
+
     // TCP socket states
     // UNBOUND - just created, must bind port now.
     // BOUND - port bound, but not connected/listening.
@@ -51,7 +54,7 @@ public class TCPSock {
         client.setNextSeqNum(transport.getSeqNum() + 1);
         client.setWindowSize(transport.getWindow());
 
-        serverClient = new TCPSockServerClient();
+        serverClient = new TCPSockServerClient(READ_BUFFER_SIZE);
 
         state = State.ESTABLISHED;
         type = Type.SERVER_CLIENT;
@@ -256,11 +259,17 @@ public class TCPSock {
         Segment segment = client.peekTimerQueue();
         if (segment == null) {
             client.stopTimer();
+            node.logOutput("Timeout: No segments on queue.");
             return;
         }
 
-        // If the segment has already been ACK'd, return.
-        if (segment.getSeqNum() != seqNum) return;
+        // // If the segment has already been ACK'd, return.
+        // if (segment.getSeqNum() != seqNum) {
+        //     node.logOutput("Timeout: " + seqNum + "!=" + segment.getSeqNum());
+        //     return;
+        // }
+
+        node.logOutput("Timeout resend: " + segment.getType() + ", " + segment.getSeqNum());
 
         clientSend(
             segment.getType(), segment.getSeqNum(), segment.getPayload());
@@ -270,8 +279,9 @@ public class TCPSock {
 
     // Server receive SYN on listener.
     private void receiveSYN(int srcAddr, int srcPort, Transport transport) {
-        if (!isListening()) {
-            node.logError("SYN received while not listening.");
+        if (isServerClient()) {
+            // Send back ACK for SYN.
+            send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
             return;
         }
 
@@ -304,8 +314,10 @@ public class TCPSock {
         receiveACKForSYN(transport);
         receiveACKForDATA(transport);
 
-        // Remove from timer queue messages that are ACK'd.
-        client.pruneTimerQueue(client.getSendBase());
+        if (!isListening()) {
+            // Remove from timer queue messages that are ACK'd.
+            client.pruneTimerQueue(client.getSendBase());
+        }
     }
 
     private void receiveACKForSYN(Transport transport) {
@@ -367,7 +379,7 @@ public class TCPSock {
         if (!isServerClient()) return;
 
         if (isConnected() || isClosurePending()) {
-            node.logOutput("Received data with seqNum " + transport.getSeqNum());
+            node.logOutput("Received data (" + transport.getPayload().length + ") with seqNum " + transport.getSeqNum());
 
             if (client.getNextSeqNum() == transport.getSeqNum()) {
                 int prevSeqNum = client.getNextSeqNum();
@@ -399,11 +411,11 @@ public class TCPSock {
     }
 
     private void receiveFIN(Transport transport) {
-        if (isListening()) return;
+        if (!isServerClient()) return;
 
         if (!isClosurePending()) {
             node.logOutput("F");
-            close();
+            state = State.SHUTDOWN;
         }
 
         // Used for delayed ACK for FIN if still needs to receive older DATA.
@@ -419,10 +431,14 @@ public class TCPSock {
 
         send(Transport.ACK, 0, client.getSeqNumFIN(), dummy);
 
+        release();
+
         node.logOutput("Sent ACK for FIN (" + client.getSeqNumFIN() + ")");
     }
 
     private void clientSend(int type, byte[] payload) {
+        node.logOutput("Send: " + type + ", " + client.getNextSeqNum() + ", " + payload.length);
+
         clientSend(type, client.getNextSeqNum(), payload);
         client.incNextSeqNum(payload.length);
     }
