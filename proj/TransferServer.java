@@ -118,6 +118,7 @@ public class TransferServer extends FishThread {
                 if (count > 0) {
                     //node.logOutput("verifying data...");
                     for (int i = index; i < index + count; i++) {
+                        // node.logOutput("Byte check (" + count + "): " + i + " gives " + (int)buf[i]);
                         if (buf[i] != (byte) i) {
                             // data corrupted
                             node.logError("time = " + manager.now() + " msec");

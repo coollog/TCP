@@ -1,5 +1,5 @@
 public class TCPSock {
-    private static final byte dummy[] = new byte[0];
+    public static final byte dummy[] = new byte[0];
 
     // TCP socket states
     // UNBOUND - just created, must bind port now.
@@ -32,6 +32,7 @@ public class TCPSock {
 
     private TCPSockServer server; // Server variables.
     private TCPSockClient client; // Client variables.
+    private TCPSockServerClient serverClient; // Server-client variables.
 
     public TCPSock(TCPManager tcpMan, Node node) {
         this.tcpMan = tcpMan;
@@ -48,6 +49,9 @@ public class TCPSock {
         client = new TCPSockClient(destAddr, destPort);
         client.setNextSeqNum(transport.getSeqNum() + 1);
         client.setWindowSize(transport.getWindow());
+
+        serverClient = new TCPSockServerClient();
+
         state = State.ESTABLISHED;
         type = Type.SERVER_CLIENT;
 
@@ -192,7 +196,7 @@ public class TCPSock {
         // TODO: Implement.
         if (!isServerClient()) return -1;
 
-        return 0;
+        return serverClient.read(buf, pos, len);
     }
 
     /** END SOCKET API **/
@@ -201,7 +205,7 @@ public class TCPSock {
         if (isListening()) {
             switch (transport.getType()) {
             case Transport.SYN:
-                node.logOutput("SYN received from " + AddressPair.toString(srcAddr, srcPort));
+                node.logOutput("SYN received from " + SocketManager.AddressPair.toString(srcAddr, srcPort));
                 receiveSYN(srcAddr, srcPort, transport);
                 break;
             }
@@ -279,19 +283,21 @@ public class TCPSock {
             node.logOutput("Received data with seqNum " + transport.getSeqNum());
 
             if (client.getNextSeqNum() == transport.getSeqNum()) {
+                int prevSeqNum = client.getNextSeqNum();
+
                 // Segment received is in-order.
-                // TODO: Deliver all consecutive received segments.
-                int ackSeqNum =
-                    client.getNextSeqNum() + transport.getPayload().length;
-                send(Transport.ACK, 0, ackSeqNum, transport.getPayload());
+                // Deliver all consecutive received segments and ACK for last
+                // delivered segment.
+                serverClient.bufferSegment(
+                    transport.getSeqNum(), transport.getPayload());
+                client.incNextSeqNum(serverClient.unloadSegmentBuffer());
+                send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
 
-                node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + client.getNextSeqNum() + " and ackSeqNum " + ackSeqNum);
-
-                client.setNextSeqNum(ackSeqNum);
+                node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + prevSeqNum + " and ackSeqNum " + client.getNextSeqNum());
             } else if (client.getNextSeqNum() < transport.getSeqNum()) {
                 // Segment received is out-of-order.
                 // Queue up the segment.
-                server.bufferSegment(
+                serverClient.bufferSegment(
                     transport.getSeqNum(), transport.getPayload());
             } else {
                 // Segment received is old, ignore.

@@ -1,6 +1,15 @@
 import java.util.*;
 
 public class SocketManager {
+    public static class AddressPair {
+        public static String toString(int addr, int port) {
+            return addr + ":" + port;
+        }
+        public static String toString(int srcAddr, int srcPort, int destPort) {
+            return toString(srcAddr, srcPort) + "->" + destPort;
+        }
+    }
+
     private class SockSet {
         private Map<String, TCPSock> sockMap = new HashMap<String, TCPSock>();
 
