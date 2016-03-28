@@ -1,6 +1,3 @@
-import java.util.concurrent.*;
-import java.util.*;
-
 public class TCPSock {
     private static final byte dummy[] = new byte[0];
 
@@ -33,15 +30,8 @@ public class TCPSock {
 
     private int myPort;
 
-    // Server variables
-    private ArrayBlockingQueue<TCPSock> serverBacklog;
-    private HashSet<String> serverClientAddresses;
-
-    // Client variables
-    private int clientSeqNo;
-    private int clientWindowSize;
-    private int clientDestAddr;
-    private int clientDestPort;
+    private TCPSockServer server; // Server variables.
+    private TCPSockClient client; // Client variables.
 
     public TCPSock(TCPManager tcpMan, Node node) {
         this.tcpMan = tcpMan;
@@ -55,15 +45,14 @@ public class TCPSock {
                     Transport transport) {
         this(tcpMan, node);
 
-        clientSeqNo = transport.getSeqNum() + 1;
-        clientWindowSize = transport.getWindow();
-        clientDestAddr = destAddr;
-        clientDestPort = destPort;
+        client = new TCPSockClient(destAddr, destPort);
+        client.setNextSeqNum(transport.getSeqNum() + 1);
+        client.setWindowSize(transport.getWindow());
         state = State.ESTABLISHED;
         type = Type.SERVER_CLIENT;
 
         // Send back ACK.
-        send(Transport.ACK, 0, clientSeqNo, dummy);
+        send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
     }
 
     /** SOCKET API (Non-blocking) **/
@@ -97,9 +86,8 @@ public class TCPSock {
         state = State.LISTEN;
         type = Type.SERVER_LISTENER;
 
-        // Create the backlog queue.
-        serverBacklog = new ArrayBlockingQueue<TCPSock>(backlog);
-        serverClientAddresses = new HashSet<String>();
+        // Start the server.
+        server = new TCPSockServer(backlog);
 
         return 0;
     }
@@ -112,7 +100,7 @@ public class TCPSock {
     public TCPSock accept() {
         if (!isListening()) return null;
 
-        return serverBacklog.poll();
+        return server.pollBacklog();
     }
 
     public boolean isConnectionPending() { return state == State.SYN_SENT; }
@@ -130,16 +118,14 @@ public class TCPSock {
     public int connect(int destAddr, int destPort) {
         if (!canConnect()) return -1;
 
-        // Initialize client variables.
-        clientSeqNo = generateSeqNo();
-        clientWindowSize = 2 * Transport.MAX_PAYLOAD_SIZE;
-        clientDestAddr = destAddr;
-        clientDestPort = destPort;
+        // Start the client.
+        client = new TCPSockClient(destAddr, destPort);
 
         // Send SYN.
-        send(Transport.SYN, 0, clientSeqNo, dummy);
+        // send(Transport.SYN, 0, clientNextSeqNum, dummy);
+        clientSend(Transport.SYN, dummy);
 
-        clientSeqNo ++;
+        client.incNextSeqNum(1);
         state = State.SYN_SENT;
         type = Type.CLIENT;
 
@@ -174,7 +160,22 @@ public class TCPSock {
      */
     public int write(byte[] buf, int pos, int len) {
         // TODO: Implement.
-        return -1;
+        if (!isClient()) return -1;
+
+        len = Math.min(Transport.MAX_PAYLOAD_SIZE, len);
+
+        int bytesWritten = 0;
+
+        // Write buf to payload.
+        byte[] payload = new byte[len];
+        for (int i = 0; i < Math.min(len, buf.length - pos); i ++) {
+            payload[i] = buf[pos + i];
+            bytesWritten ++;
+        }
+
+        clientSend(Transport.DATA, payload);
+
+        return bytesWritten;
     }
 
     /**
@@ -189,7 +190,9 @@ public class TCPSock {
      */
     public int read(byte[] buf, int pos, int len) {
         // TODO: Implement.
-        return -1;
+        if (!isServerClient()) return -1;
+
+        return 0;
     }
 
     /** END SOCKET API **/
@@ -205,25 +208,25 @@ public class TCPSock {
         } else if (isClient()) {
             switch (transport.getType()) {
             case Transport.ACK:
-                if (isConnectionPending()) {
-                    state = State.ESTABLISHED;
-                    node.logOutput("Connected!");
-                } else {
-
-                }
+                receiveACK(transport);
                 break;
             }
         } else if (isServerClient()) {
-
+            switch (transport.getType()) {
+            case Transport.DATA:
+                receiveDATA(transport);
+                break;
+            }
         } else {
             node.logError("Received message when not server or client?");
             return;
         }
     }
 
+    // Server receive SYN on listener.
     private void receiveSYN(int srcAddr, int srcPort, Transport transport) {
         // Make sure backlog has room.
-        if (serverBacklog.remainingCapacity() == 0) return;
+        if (server.isBacklogFull()) return;
 
         // Make the TCPSock.
         TCPSock sock = new TCPSock(tcpMan, node, srcAddr, srcPort, transport);
@@ -232,30 +235,83 @@ public class TCPSock {
         if (tcpMan.bind(srcAddr, srcPort, myPort, sock) == -1) return;
 
         // Add to backlog.
-        serverBacklog.add(sock);
+        if (!server.addToBacklog(sock)) sock.release();
     }
 
-    private int generateSeqNo() {
-        Random rand = new Random(System.nanoTime());
-        return rand.nextInt(1 << 16);
+    // Client receive ACK.
+    private void receiveACK(Transport transport) {
+        if (isConnectionPending()) {
+            if (transport.getSeqNum() == client.getNextSeqNum()) {
+                state = State.ESTABLISHED;
+                client.setSendBase(client.getNextSeqNum());
+                node.logOutput("Connected!");
+                return;
+            }
+            node.logError("Received future ACK while not connected.");
+            return;
+        }
+
+        // Received ACK for DATA.
+        if (transport.getSeqNum() > client.getSendBase()) {
+            node.logOutput("Received ACK, updated sendBase from " + client.getSendBase() + " to " + transport.getSeqNum());
+
+            client.setSendBase(transport.getSeqNum());
+
+            // If there are currently any not-yet-acknowledged segments,
+            // start timer.
+            if (client.getNextSeqNum() > client.getSendBase()) {
+                node.logOutput("Still has unACKed segments till " + client.getNextSeqNum());
+
+                // TODO: Start timer.
+            }
+        } else { // A duplicate ACK received.
+            // increment number of duplicate ACKs received for y
+            // if (number of duplicate ACKS received for y==3) {
+            //     /* TCP fast retransmit */
+            //     resend segment with sequence number y
+            // }
+        }
     }
 
-    // Add connection to backlog.
-    private int appendToBacklog(TCPSock sock) {
-        if (!isListening()) return -1;
+    // ServerClient receive DATA.
+    private void receiveDATA(Transport transport) {
+        if (isConnected()) {
+            node.logOutput("Received data with seqNum " + transport.getSeqNum());
 
-        try { serverBacklog.add(sock); }
-        catch (IllegalStateException e) { return -1; }
+            if (client.getNextSeqNum() == transport.getSeqNum()) {
+                // Segment received is in-order.
+                // TODO: Deliver all consecutive received segments.
+                int ackSeqNum =
+                    client.getNextSeqNum() + transport.getPayload().length;
+                send(Transport.ACK, 0, ackSeqNum, transport.getPayload());
 
-        return 0;
+                node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + client.getNextSeqNum() + " and ackSeqNum " + ackSeqNum);
+
+                client.setNextSeqNum(ackSeqNum);
+            } else if (client.getNextSeqNum() < transport.getSeqNum()) {
+                // Segment received is out-of-order.
+                // Queue up the segment.
+                server.bufferSegment(
+                    transport.getSeqNum(), transport.getPayload());
+            } else {
+                // Segment received is old, ignore.
+            }
+        } else {
+
+        }
+    }
+
+    private void clientSend(int type, byte[] payload) {
+        send(type, client.getWindowSize(), client.getNextSeqNum(), payload);
+        client.incNextSeqNum(payload.length);
     }
 
     private void send(int type, int window, int seqNum, byte[] payload) {
         Transport transport =
             new Transport(
-                myPort, clientDestPort, type, window, seqNum, payload);
+                myPort, client.getDestPort(), type, window, seqNum, payload);
         node.sendSegment(node.getAddr(),
-                         clientDestAddr,
+                         client.getDestAddr(),
                          Protocol.TRANSPORT_PKT,
                          transport.pack());
     }
