@@ -1,35 +1,12 @@
 import java.nio.*;
-import java.util.*;
 
 public class TCPSockServerClient {
-    private class Segment implements Comparable<Segment> {
-        private int seqNum;
-        private byte[] payload;
-
-        public Segment(int seqNum, byte[] payload) {
-            this.seqNum = seqNum;
-            this.payload = payload;
-        }
-
-        public int getSeqNum() { return seqNum; }
-        public byte[] getPayload() { return payload; }
-        public int getPayloadSize() { return payload.length; }
-
-        public int compareTo(Segment o) {
-            return new Integer(seqNum).compareTo(o.getSeqNum());
-        }
-
-        public boolean isNextTo(Segment o) {
-            return o.getSeqNum() + o.getPayloadSize() == seqNum;
-        }
-    }
-
-    private PriorityQueue<Segment> segmentBuffer = new PriorityQueue<Segment>();
+    private Segment.Buffer segmentBuffer = new Segment.Buffer();
     private ByteBuffer readBuffer = ByteBuffer.allocate(0x400);
 
     // Segment buffer functions.
     public void bufferSegment(int seqNum, byte[] payload) {
-        segmentBuffer.add(new Segment(seqNum, payload));
+        segmentBuffer.add(seqNum, payload);
     }
     /**
      * Delivers consecutive segments in segmentBuffer into the readbuffer.
@@ -40,8 +17,10 @@ public class TCPSockServerClient {
     public int unloadSegmentBuffer() {
         int byteCount = 0;
 
-        Segment lastSegment =
-            new Segment(segmentBuffer.peek().getSeqNum(), TCPSock.dummy);
+        int firstSeqNum = segmentBuffer.peekSeqNum();
+        if (firstSeqNum == -1) return 0;
+
+        Segment lastSegment = new Segment(firstSeqNum, TCPSock.dummy);
 
         while (true) {
             Segment segment = segmentBuffer.peek();

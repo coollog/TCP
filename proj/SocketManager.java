@@ -17,7 +17,7 @@ public class SocketManager {
             sockMap.put("", sock);
         }
         public SockSet(String srcAddress, TCPSock sock) {
-            sockMap.put(srcAddress, sock);
+            put(srcAddress, sock);
         }
 
         public TCPSock get(int srcAddr, int srcPort) {
@@ -29,33 +29,63 @@ public class SocketManager {
             return sock;
         }
 
+        public void put(String srcAddress, TCPSock sock) {
+            sockMap.put(srcAddress, sock);
+        }
+
+        public TCPSock remove(String srcAddress) {
+            return sockMap.remove(srcAddress);
+        }
+
         public boolean hasAddress(String srcAddress) {
             return sockMap.containsKey(srcAddress);
+        }
+
+        public String toString() {
+            return sockMap.toString();
         }
     }
 
     private Map<Integer, SockSet> portMap = new HashMap<Integer, SockSet>();
 
-    public int assign(int destPort, TCPSock sock) {
-        if (!isPortAvailable(destPort)) return -1;
+    public boolean assign(int destPort, TCPSock sock) {
+        if (!isPortAvailable(destPort)) return false;
 
         portMap.put(destPort, new SockSet(sock));
+        // System.out.println("SockMan Bind (" + destPort + "): portMap=" + portMap);
 
-        return 0;
+        return true;
     }
 
-    public int assign(int srcAddr, int srcPort, int destPort, TCPSock sock) {
+    public boolean assign(int srcAddr, int srcPort, int destPort, TCPSock sock) {
         String srcAddress = AddressPair.toString(srcAddr, srcPort);
 
-        if (!isSockAvailable(srcAddress, destPort)) return -1;
+        if (!isSockAvailable(srcAddress, destPort)) return false;
 
-        portMap.put(destPort, new SockSet(srcAddress, sock));
+        if (isPortAvailable(destPort)) {
+            portMap.put(destPort, new SockSet(srcAddress, sock));
+        } else {
+            SockSet sockSet = portMap.get(destPort);
+            sockSet.put(srcAddress, sock);
+        }
 
-        return 0;
+        // System.out.println("SockMan Bind (" + destPort + ", " + srcAddress + "): portMap=" + portMap);
+
+        return true;
     }
 
-    public boolean deassign(int destPort) {
+    public boolean unassign(int destPort) {
         return portMap.remove(destPort) != null;
+    }
+
+    public boolean unassign(int srcAddr, int srcPort, int destPort) {
+        String srcAddress = AddressPair.toString(srcAddr, srcPort);
+
+        if (isSockAvailable(srcAddress, destPort)) return false;
+        SockSet sockSet = portMap.get(destPort);
+
+        // System.out.println("portMap=" + portMap);
+        return sockSet.remove(srcAddress) != null;
     }
 
     public TCPSock find(int srcAddr, int srcPort, int destPort) {

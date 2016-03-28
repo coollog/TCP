@@ -41,6 +41,7 @@ public class TCPSock {
 
     private TCPSock(TCPManager tcpMan,
                     Node node,
+                    int myPort,
                     int destAddr,
                     int destPort,
                     Transport transport) {
@@ -54,6 +55,7 @@ public class TCPSock {
 
         state = State.ESTABLISHED;
         type = Type.SERVER_CLIENT;
+        this.myPort = myPort;
 
         // Send back ACK.
         send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
@@ -71,7 +73,7 @@ public class TCPSock {
         if (!canBind()) return -1;
 
         // TCPManager manages the assignment of ports.
-        if (tcpMan.bind(this, localPort) == -1) return -1;
+        if (!tcpMan.bind(this, localPort)) return -1;
 
         state = State.BOUND;
         myPort = localPort;
@@ -142,14 +144,31 @@ public class TCPSock {
      * Initiate closure of a connection (graceful shutdown)
      */
     public void close() {
-        // TODO: Implement.
+        if (isListening()) return;
+
+        client.incNextSeqNum(1);
+        clientSend(Transport.FIN, dummy);
+        state = State.SHUTDOWN;
+
+        node.logOutput("Sent FIN (" + client.getNextSeqNum() + ")");
     }
 
     /**
      * Release a connection immediately (abortive shutdown)
      */
     public void release() {
-        // TODO: Implement.
+        if (isClosed()) return;
+
+        state = State.CLOSED;
+
+        if (isServerClient()) {
+            tcpMan.unbind(client.getDestAddr(),
+                          client.getDestPort(),
+                          myPort);
+            return;
+        }
+
+        tcpMan.unbind(myPort);
     }
 
     /**
@@ -163,7 +182,7 @@ public class TCPSock {
      *             than len; on failure, -1
      */
     public int write(byte[] buf, int pos, int len) {
-        // TODO: Implement.
+        if (isClosed()) return -1;
         if (!isClient()) return -1;
 
         len = Math.min(Transport.MAX_PAYLOAD_SIZE, len);
@@ -193,7 +212,7 @@ public class TCPSock {
      *             than len; on failure, -1
      */
     public int read(byte[] buf, int pos, int len) {
-        // TODO: Implement.
+        if (isClosed()) return -1;
         if (!isServerClient()) return -1;
 
         return serverClient.read(buf, pos, len);
@@ -201,61 +220,113 @@ public class TCPSock {
 
     /** END SOCKET API **/
 
+    public Node getNode() { return node; }
+    public int getMyAddr() { return node.getAddr(); }
+    public Manager getManager() { return node.getManager(); }
+
     public void receive(int srcAddr, int srcPort, Transport transport) {
-        if (isListening()) {
-            switch (transport.getType()) {
-            case Transport.SYN:
-                node.logOutput("SYN received from " + SocketManager.AddressPair.toString(srcAddr, srcPort));
-                receiveSYN(srcAddr, srcPort, transport);
-                break;
-            }
-        } else if (isClient()) {
-            switch (transport.getType()) {
-            case Transport.ACK:
-                receiveACK(transport);
-                break;
-            }
-        } else if (isServerClient()) {
-            switch (transport.getType()) {
-            case Transport.DATA:
-                receiveDATA(transport);
-                break;
-            }
-        } else {
+        if (isClosed()) return;
+
+        switch (transport.getType()) {
+
+        case Transport.SYN:
+            node.logOutput("SYN received from " + SocketManager.AddressPair.toString(srcAddr, srcPort));
+            receiveSYN(srcAddr, srcPort, transport);
+            break;
+
+        case Transport.DATA:
+            receiveDATA(transport);
+            break;
+
+        case Transport.ACK:
+            receiveACK(transport);
+            break;
+
+        case Transport.FIN:
+            receiveFIN(transport);
+            break;
+        }
+
+        if (isNone())
             node.logError("Received message when not server or client?");
+    }
+
+    // Handles timeouts.
+    public void timeout(Integer seqNum) {
+        Segment segment = client.peekTimerQueue();
+        if (segment == null) {
+            client.stopTimer();
             return;
         }
+
+        // If the segment has already been ACK'd, return.
+        if (segment.getSeqNum() != seqNum) return;
+
+        clientSend(
+            segment.getType(), segment.getSeqNum(), segment.getPayload());
+
+        client.startTimer(this);
     }
 
     // Server receive SYN on listener.
     private void receiveSYN(int srcAddr, int srcPort, Transport transport) {
+        if (!isListening()) {
+            node.logError("SYN received while not listening.");
+            return;
+        }
+
         // Make sure backlog has room.
-        if (server.isBacklogFull()) return;
+        if (server.isBacklogFull()) {
+            node.logError("Backlog full.");
+            return;
+        }
 
         // Make the TCPSock.
-        TCPSock sock = new TCPSock(tcpMan, node, srcAddr, srcPort, transport);
+        TCPSock sock =
+            new TCPSock(tcpMan, node, myPort, srcAddr, srcPort, transport);
 
         // Register with TCPManager.
-        if (tcpMan.bind(srcAddr, srcPort, myPort, sock) == -1) return;
+        if (!tcpMan.bind(srcAddr, srcPort, myPort, sock)) {
+            node.logError("Could not register address with SocketManager.");
+            return;
+        }
 
         // Add to backlog.
-        if (!server.addToBacklog(sock)) sock.release();
+        if (!server.addToBacklog(sock)) {
+            sock.release();
+            node.logError("Could not add to backlog.");
+        }
     }
 
     // Client receive ACK.
     private void receiveACK(Transport transport) {
-        if (isConnectionPending()) {
-            if (transport.getSeqNum() == client.getNextSeqNum()) {
-                state = State.ESTABLISHED;
-                client.setSendBase(client.getNextSeqNum());
-                node.logOutput("Connected!");
-                return;
-            }
-            node.logError("Received future ACK while not connected.");
+        receiveACKForFIN(transport);
+        receiveACKForSYN(transport);
+        receiveACKForDATA(transport);
+
+        // Remove from timer queue messages that are ACK'd.
+        client.pruneTimerQueue(client.getSendBase());
+    }
+
+    private void receiveACKForSYN(Transport transport) {
+        if (!isClient()) return;
+        if (!isConnectionPending()) return;
+
+        if (transport.getSeqNum() == client.getNextSeqNum()) {
+            state = State.ESTABLISHED;
+            client.setSendBase(client.getNextSeqNum() + 1);
+
+            node.logOutput("Connected!");
             return;
         }
+        node.logError("Received future ACK while not connected.");
+    }
 
-        // Received ACK for DATA.
+    private void receiveACKForDATA(Transport transport) {
+        if (isClosurePending()) return;
+        if (!isClient()) return;
+        if (isConnectionPending()) return;
+
         if (transport.getSeqNum() > client.getSendBase()) {
             node.logOutput("Received ACK, updated sendBase from " + client.getSendBase() + " to " + transport.getSeqNum());
 
@@ -266,7 +337,7 @@ public class TCPSock {
             if (client.getNextSeqNum() > client.getSendBase()) {
                 node.logOutput("Still has unACKed segments till " + client.getNextSeqNum());
 
-                // TODO: Start timer.
+                client.startTimer(this);
             }
         } else { // A duplicate ACK received.
             // increment number of duplicate ACKs received for y
@@ -277,9 +348,25 @@ public class TCPSock {
         }
     }
 
+    private void receiveACKForFIN(Transport transport) {
+        if (!isClosurePending()) return;
+
+        if (transport.getSeqNum() != client.getNextSeqNum()) {
+            node.logError("Received incorrect FIN ACK (" + client.getNextSeqNum() + "!=" + transport.getSeqNum() + ").");
+            return;
+        }
+
+        client.setSendBase(transport.getSeqNum() + 1);
+        release();
+
+        node.logOutput("Received ACK for FIN. Closed.");
+    }
+
     // ServerClient receive DATA.
     private void receiveDATA(Transport transport) {
-        if (isConnected()) {
+        if (!isServerClient()) return;
+
+        if (isConnected() || isClosurePending()) {
             node.logOutput("Received data with seqNum " + transport.getSeqNum());
 
             if (client.getNextSeqNum() == transport.getSeqNum()) {
@@ -291,7 +378,6 @@ public class TCPSock {
                 serverClient.bufferSegment(
                     transport.getSeqNum(), transport.getPayload());
                 client.incNextSeqNum(serverClient.unloadSegmentBuffer());
-                send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
 
                 node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + prevSeqNum + " and ackSeqNum " + client.getNextSeqNum());
             } else if (client.getNextSeqNum() < transport.getSeqNum()) {
@@ -301,15 +387,53 @@ public class TCPSock {
                     transport.getSeqNum(), transport.getPayload());
             } else {
                 // Segment received is old, ignore.
+                return;
             }
-        } else {
 
+            // Send an ACK no matter what.
+            send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
+
+            // Check if ACK needs to be sent for FIN if in SHUTDOWN.
+            sendACKForFIN();
         }
     }
 
+    private void receiveFIN(Transport transport) {
+        if (isListening()) return;
+
+        if (!isClosurePending()) {
+            node.logOutput("F");
+            close();
+        }
+
+        // Used for delayed ACK for FIN if still needs to receive older DATA.
+        client.setSeqNumFIN(transport.getSeqNum());
+
+        // Check if ACK needs to be sent for FIN.
+        sendACKForFIN();
+    }
+
+    private void sendACKForFIN() {
+        if (client.getSeqNumFIN() == -1) return;
+        if (client.getNextSeqNum() + 1 < client.getSeqNumFIN()) return;
+
+        send(Transport.ACK, 0, client.getSeqNumFIN(), dummy);
+
+        node.logOutput("Sent ACK for FIN (" + client.getSeqNumFIN() + ")");
+    }
+
     private void clientSend(int type, byte[] payload) {
-        send(type, client.getWindowSize(), client.getNextSeqNum(), payload);
+        clientSend(type, client.getNextSeqNum(), payload);
         client.incNextSeqNum(payload.length);
+    }
+    private void clientSend(int type, int seqNum, byte[] payload) {
+        send(type, client.getWindowSize(), seqNum, payload);
+
+        // Add segment to the queue waiting for ACK.
+        client.addToTimerQueue(type, seqNum, payload);
+
+        // Start timer.
+        if (!client.isTimerRunning()) client.startTimer(this);
     }
 
     private void send(int type, int window, int seqNum, byte[] payload) {
@@ -322,14 +446,10 @@ public class TCPSock {
                          transport.pack());
     }
 
-    // Handles timeouts.
-    private void timeout() {
-
-    }
-
     private boolean canBind() { return state == State.UNBOUND; }
     private boolean canListen() { return state == State.BOUND; }
     private boolean canConnect() { return state == State.BOUND; }
+    private boolean isNone() { return type == Type.NONE; }
     private boolean isListening() { return type == Type.SERVER_LISTENER; }
     private boolean isServerClient() { return type == Type.SERVER_CLIENT; }
     private boolean isClient() { return type == Type.CLIENT; }

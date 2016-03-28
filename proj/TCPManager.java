@@ -29,11 +29,6 @@ public class TCPManager {
 
     /** SOCKET API **/
 
-    // Assign the port to the TCPSock.
-    public int bind(TCPSock sock, int port) {
-        return sockMan.assign(port, sock);
-    }
-
     /**
      * Create a socket
      *
@@ -53,13 +48,31 @@ public class TCPManager {
                         Transport transport) {
         if (destAddr != addr) return;
 
+        String address =
+            SocketManager.AddressPair.toString(srcAddr, srcPort, destPort);
+        node.logOutput("TCP Packet: " + address + " sent " + transport.getType());
+
         TCPSock sock = sockMan.find(srcAddr, srcPort, destPort);
-        if (sock == null) return;
+        if (sock == null) {
+            node.logError("Receive: Could not find socket for " + address);
+            return;
+        }
 
         sock.receive(srcAddr, srcPort, transport);
     }
 
-    public int bind(int srcAddr, int srcPort, int destPort, TCPSock sock) {
+    // Assign the port to the TCPSock.
+    public boolean bind(TCPSock sock, int port) {
+        return sockMan.assign(port, sock);
+    }
+    public boolean bind(int srcAddr, int srcPort, int destPort, TCPSock sock) {
         return sockMan.assign(srcAddr, srcPort, destPort, sock);
+    }
+
+    public boolean unbind(int destPort) {
+        return sockMan.unassign(destPort);
+    }
+    public boolean unbind(int srcAddr, int srcPort, int destPort) {
+        return sockMan.unassign(srcAddr, srcPort, destPort);
     }
 }

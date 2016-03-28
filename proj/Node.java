@@ -48,6 +48,8 @@ public class Node {
         this.tcpMan = new TCPManager(this, addr, manager);
     }
 
+    public Manager getManager() { return manager; }
+
     /**
      * Called by the manager to start this node up.
      */
