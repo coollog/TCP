@@ -3,7 +3,7 @@ import java.util.*;
 public class TCPSockClient {
     private int nextSeqNum;
     private int sendBase;
-    private int windowSize;
+    private int windowSize = TCPSockServerClient.READ_BUFFER_SIZE;
     private int destAddr;
     private int destPort;
 
@@ -15,7 +15,6 @@ public class TCPSockClient {
         // Initialize client variables.
         nextSeqNum = generateSeqNum();
         sendBase = nextSeqNum;
-        windowSize = 2 * Transport.MAX_PAYLOAD_SIZE;
         this.destAddr = destAddr;
         this.destPort = destPort;
     }
@@ -37,8 +36,9 @@ public class TCPSockClient {
     }
 
     public void receivedACKForSeqNum(TCPSock sock, int seqNum) {
+        sock.getNode().logOutput("\tReceived ACK for seqNum " + seqNum + ", current sendBase " + sendBase);
         if (seqNum > sendBase) {
-            sock.getNode().logOutput("\tReceived ACK, updated sendBase from " + getSendBase() + " to " + seqNum);
+            sock.getNode().logOutput("\tReceived ACK, updated sendBase from " + sendBase + " to " + seqNum);
 
             setSendBase(seqNum);
 
@@ -68,6 +68,13 @@ public class TCPSockClient {
     public void setNextSeqNum(int seqNum) { nextSeqNum = seqNum; }
     public void setWindowSize(int windowSize) { this.windowSize = windowSize; }
     public void setSeqNumFIN(int seqNum) { seqNumFIN = seqNum; }
+
+    // Flow Control: Gets the number of bytes that still can be sent.
+    //               We can always send >=1 byte.
+    public int getCanSendSize() {
+        int unackedSize = nextSeqNum - sendBase + 1;
+        return Math.max(1, windowSize - unackedSize);
+    }
 
     public void setSendBase(int sendBase) {
         this.sendBase = sendBase;

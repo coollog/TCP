@@ -1,12 +1,12 @@
 import java.nio.*;
 
 public class TCPSockServerClient {
-    private Segment.Buffer segmentBuffer = new Segment.Buffer();
-    private ByteBuffer readBuffer;
+    public static final int READ_BUFFER_SIZE = 10; //0x4000;
 
-    public TCPSockServerClient(int bufferSize) {
-        readBuffer = ByteBuffer.allocate(bufferSize);
-    }
+    private Segment.Buffer segmentBuffer = new Segment.Buffer();
+    private ByteBuffer readBuffer = ByteBuffer.allocate(READ_BUFFER_SIZE);
+
+    public int getReceiveWindow() { return readBuffer.remaining(); }
 
     // Segment buffer functions.
     public void bufferSegment(int seqNum, byte[] payload) {
@@ -33,8 +33,10 @@ public class TCPSockServerClient {
             // If segment is next to the last segment, write the segment's
             // payload to the readbuffer and remove the segment.
             if (segment.isNextTo(lastSegment)) {
-                byteCount += segment.getPayloadSize();
+                if (readBuffer.remaining() < segment.getPayloadSize()) break;
+
                 readBuffer.put(segment.getPayload());
+                byteCount += segment.getPayloadSize();
                 lastSegment = segmentBuffer.poll();
             } else break;
         }

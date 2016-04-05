@@ -2,7 +2,6 @@ public class TCPSock {
     public static final byte dummy[] = new byte[0];
 
     private static final int WINDOW_SIZE = 0x2000;
-    private static final int READ_BUFFER_SIZE = 0x4000;
 
     // TCP socket states
     // UNBOUND - just created, must bind port now.
@@ -54,14 +53,17 @@ public class TCPSock {
         client.setNextSeqNum(transport.getSeqNum() + 1);
         client.setWindowSize(transport.getWindow());
 
-        serverClient = new TCPSockServerClient(READ_BUFFER_SIZE);
+        serverClient = new TCPSockServerClient();
 
         state = State.ESTABLISHED;
         type = Type.SERVER_CLIENT;
         this.myPort = myPort;
 
         // Send back ACK.
-        send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
+        send(Transport.ACK,
+             serverClient.getReceiveWindow(),
+             client.getNextSeqNum(),
+             dummy);
     }
 
     /** SOCKET API (Non-blocking) **/
@@ -188,7 +190,9 @@ public class TCPSock {
         if (isClosed()) return -1;
         if (!isClient()) return -1;
 
-        len = Math.min(Transport.MAX_PAYLOAD_SIZE, len);
+        node.logOutput("Writing... can write " + client.getCanSendSize());
+        len = Math.min(Transport.MAX_PAYLOAD_SIZE,
+                       Math.min(len, client.getCanSendSize()));
 
         int bytesWritten = 0;
 
@@ -268,7 +272,10 @@ public class TCPSock {
     private void receiveSYN(int srcAddr, int srcPort, Transport transport) {
         if (isServerClient()) {
             // Send back ACK for SYN.
-            send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
+            send(Transport.ACK,
+                 serverClient.getReceiveWindow(),
+                 client.getNextSeqNum(),
+                 dummy);
             return;
         }
 
@@ -302,6 +309,9 @@ public class TCPSock {
         receiveACKForFIN(transport);
         receiveACKForSYN(transport);
         receiveACKForDATA(transport);
+
+        client.setWindowSize(transport.getWindow());
+        node.logOutput("Received ACK for " + transport.getSeqNum() + " with window size: " + client.getWindowSize());
     }
 
     private void receiveACKForSYN(Transport transport) {
@@ -319,14 +329,15 @@ public class TCPSock {
     }
 
     private void receiveACKForDATA(Transport transport) {
-        if (isClosurePending()) return;
         if (!isClient()) return;
+        if (isClosurePending()) return;
         if (isConnectionPending()) return;
 
         client.receivedACKForSeqNum(this, transport.getSeqNum());
     }
 
     private void receiveACKForFIN(Transport transport) {
+        if (!isClient()) return;
         if (!isClosurePending()) return;
 
         if (transport.getSeqNum() != client.getNextSeqNum()) {
@@ -343,37 +354,39 @@ public class TCPSock {
     // ServerClient receive DATA.
     private void receiveDATA(Transport transport) {
         if (!isServerClient()) return;
+        if (!isConnected() && !isClosurePending()) return;
 
-        if (isConnected() || isClosurePending()) {
-            node.logOutput("Received data (" + transport.getPayload().length + ") with seqNum " + transport.getSeqNum());
+        node.logOutput("Received data (" + transport.getPayload().length + ") with seqNum " + transport.getSeqNum());
 
-            if (client.getNextSeqNum() == transport.getSeqNum()) {
-                int prevSeqNum = client.getNextSeqNum();
+        if (client.getNextSeqNum() == transport.getSeqNum()) {
+            int prevSeqNum = client.getNextSeqNum();
 
-                // Segment received is in-order.
-                // Deliver all consecutive received segments and ACK for last
-                // delivered segment.
-                serverClient.bufferSegment(
-                    transport.getSeqNum(), transport.getPayload());
-                client.incNextSeqNum(serverClient.unloadSegmentBuffer());
+            // Segment received is in-order.
+            // Deliver all consecutive received segments and ACK for last
+            // delivered segment.
+            serverClient.bufferSegment(
+                transport.getSeqNum(), transport.getPayload());
+            client.incNextSeqNum(serverClient.unloadSegmentBuffer());
 
-                node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + prevSeqNum + " and ackSeqNum " + client.getNextSeqNum());
-            } else if (client.getNextSeqNum() < transport.getSeqNum()) {
-                // Segment received is out-of-order.
-                // Queue up the segment.
-                serverClient.bufferSegment(
-                    transport.getSeqNum(), transport.getPayload());
-            } else {
-                // Segment received is old, ignore.
-                return;
-            }
-
-            // Send an ACK no matter what.
-            send(Transport.ACK, 0, client.getNextSeqNum(), dummy);
-
-            // Check if ACK needs to be sent for FIN if in SHUTDOWN.
-            sendACKForFIN();
+            node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + prevSeqNum + " and ackSeqNum " + client.getNextSeqNum());
+        } else if (client.getNextSeqNum() < transport.getSeqNum()) {
+            // Segment received is out-of-order.
+            // Queue up the segment.
+            serverClient.bufferSegment(
+                transport.getSeqNum(), transport.getPayload());
+        } else {
+            // Segment received is old, ignore.
+            return;
         }
+
+        // Send an ACK no matter what.
+        send(Transport.ACK,
+             serverClient.getReceiveWindow(),
+             client.getNextSeqNum(),
+             dummy);
+
+        // Check if ACK needs to be sent for FIN if in SHUTDOWN.
+        sendACKForFIN();
     }
 
     private void receiveFIN(Transport transport) {
@@ -392,10 +405,14 @@ public class TCPSock {
     }
 
     private void sendACKForFIN() {
+        if (!isServerClient()) return;
         if (client.getSeqNumFIN() == -1) return;
         if (client.getNextSeqNum() + 1 < client.getSeqNumFIN()) return;
 
-        send(Transport.ACK, 0, client.getSeqNumFIN(), dummy);
+        send(Transport.ACK,
+             serverClient.getReceiveWindow(),
+             client.getSeqNumFIN(),
+             dummy);
 
         release();
 
