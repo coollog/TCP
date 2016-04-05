@@ -1,4 +1,3 @@
-import java.lang.reflect.Method;
 import java.util.*;
 
 public class TCPSockClient {
@@ -10,9 +9,7 @@ public class TCPSockClient {
 
     private int seqNumFIN = -1; // -1 means it is not set.
 
-    private Segment.Buffer timerQueue = new Segment.Buffer();
-    private boolean timerRunning = false;
-    private int timeout = 200;
+    private TCPSockClientTimer timer = new TCPSockClientTimer(this);
 
     public TCPSockClient(int destAddr, int destPort) {
         // Initialize client variables.
@@ -23,42 +20,43 @@ public class TCPSockClient {
         this.destPort = destPort;
     }
 
-    public void startTimer(TCPSock sock) {
-        // Get smallest not-yet-acknowledged segment.
-        int seqNumMin = timerQueue.peekSeqNum();
-        if (seqNumMin == -1) return;
+    public void send(TCPSock sock, int type, byte[] payload) {
+        sock.getNode().logOutput("Send: " + type + ", " + nextSeqNum + ", " + payload.length);
 
-        // Construct callback parameters (just the seqNum).
-        String[] paramTypes = { "java.lang.Integer" };
-        Object[] params = { new Integer(seqNumMin) };
+        send(sock, type, nextSeqNum, payload);
+        incNextSeqNum(payload.length);
+    }
+    public void send(TCPSock sock, int type, int seqNum, byte[] payload) {
+        sock.send(type, windowSize, seqNum, payload);
 
-        // Construct callback.
-        try {
-            Method method = Callback.getMethod("timeout", sock, paramTypes);
-            Callback callback = new Callback(method, sock, params);
+        // Add segment to the queue waiting for ACK.
+        timer.addToQueue(type, seqNum, payload);
 
-            // Add timer.
-            sock.getManager().addTimer(sock.getMyAddr(), timeout, callback);
-        } catch (Exception e) {
-            sock.getNode().logError("Timer could not be created!");
-            e.printStackTrace();
-            return;
+        // Start timer.
+        if (!timer.isRunning()) timer.start(sock);
+    }
+
+    public void receivedACKForSeqNum(TCPSock sock, int seqNum) {
+        if (seqNum > sendBase) {
+            sock.getNode().logOutput("\tReceived ACK, updated sendBase from " + getSendBase() + " to " + seqNum);
+
+            setSendBase(seqNum);
+
+            // If there are currently any not-yet-acknowledged segments,
+            // start timer.
+            if (nextSeqNum > sendBase) {
+                sock.getNode().logOutput("Still has unACKed segments till " + nextSeqNum);
+
+                timer.start(sock);
+            }
+        } else { // A duplicate ACK received.
+            // increment number of duplicate ACKs received for y
+            // if (number of duplicate ACKS received for y==3) {
+            //     /* TCP fast retransmit */
+            //     resend segment with sequence number y
+            // }
         }
-
-        timerRunning = true;
     }
-    public void stopTimer() { timerRunning = false; }
-    public boolean isTimerRunning() { return timerRunning; }
-
-    public void addToTimerQueue(int type, int seqNum, byte[] payload) {
-        timerQueue.add(type, seqNum, payload);
-    }
-    // Removes from timerQueue all segments with seqNum < nextSeqNum.
-    public void pruneTimerQueue(int nextSeqNum) {
-        while (timerQueue.peekSeqNum() != -1 &&
-               timerQueue.peekSeqNum() < nextSeqNum) timerQueue.poll();
-    }
-    public Segment peekTimerQueue() { return timerQueue.peek(); }
 
     public int getNextSeqNum() { return nextSeqNum; }
     public int getSendBase() { return sendBase; }
@@ -68,9 +66,15 @@ public class TCPSockClient {
     public int getSeqNumFIN() { return seqNumFIN; }
     public void incNextSeqNum(int amount) { nextSeqNum += amount; }
     public void setNextSeqNum(int seqNum) { nextSeqNum = seqNum; }
-    public void setSendBase(int sendBase) { this.sendBase = sendBase; }
     public void setWindowSize(int windowSize) { this.windowSize = windowSize; }
     public void setSeqNumFIN(int seqNum) { seqNumFIN = seqNum; }
+
+    public void setSendBase(int sendBase) {
+        this.sendBase = sendBase;
+
+        // Remove from timer queue messages that are ACK'd.
+        timer.pruneQueue(sendBase);
+    }
 
     private int generateSeqNum() {
         Random rand = new Random(System.nanoTime());

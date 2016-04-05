@@ -27,6 +27,7 @@ public class Segment implements Comparable<Segment> {
     private int type;
     private int seqNum;
     private byte[] payload;
+    private long startTime;
 
     public Segment(int seqNum, byte[] payload) {
         this(Transport.DATA, seqNum, payload);
@@ -35,12 +36,16 @@ public class Segment implements Comparable<Segment> {
         this.type = type;
         this.seqNum = seqNum;
         this.payload = payload;
+
+        startTime = System.currentTimeMillis();
     }
 
     public int getType() { return type; }
     public int getSeqNum() { return seqNum; }
     public byte[] getPayload() { return payload; }
     public int getPayloadSize() { return payload.length; }
+    public int getRTT()
+        { return (int)(System.currentTimeMillis() - startTime); }
 
     public int compareTo(Segment o) {
         return new Integer(seqNum).compareTo(o.getSeqNum());
