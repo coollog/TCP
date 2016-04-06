@@ -32,6 +32,15 @@ public class TCPSockClient {
 
         // Start timer.
         if (!timer.isRunning()) timer.start();
+
+        switch (type) {
+        case Transport.SYN: System.out.print("S"); break;
+        case Transport.FIN: System.out.print("F"); break;
+        case Transport.DATA:
+            if (nextSeqNum == seqNum) System.out.print(".");
+            else System.out.print("!");
+            break;
+        }
     }
 
     public void receivedACKForSeqNum(int seqNum) {
@@ -52,6 +61,8 @@ public class TCPSockClient {
 
                 timer.start();
             }
+
+            System.out.print(":");
         } else { // A duplicate ACK received.
             // Increment number of duplicate ACKs.
             duplicateACKs ++;
@@ -65,6 +76,8 @@ public class TCPSockClient {
 
                 slowDecreaseCongestionWindowSize();
             }
+
+            System.out.print("?");
         }
 
         // Increase the congestion window no matter what.
@@ -105,16 +118,16 @@ public class TCPSockClient {
         congestionWindowSize +=
             count *
             Transport.MAX_PAYLOAD_SIZE * Transport.MAX_PAYLOAD_SIZE /
-            congestionWindowSize;
-        System.out.println("\tcwnd inc to " + congestionWindowSize);
+            Math.max(1, congestionWindowSize);
+        // System.out.println("\tcwnd inc to " + congestionWindowSize);
     }
     public void decreaseCongestionWindowSize() {
         congestionWindowSize /= 2;
-        System.out.println("\tcwnd dec to " + congestionWindowSize);
+        // System.out.println("\tcwnd dec to " + congestionWindowSize);
     }
     private void slowDecreaseCongestionWindowSize() {
         decreaseCongestionWindowSize();
         congestionWindowSize += Transport.MAX_PAYLOAD_SIZE * 3;
-        System.out.println("\tcwnd dec to " + congestionWindowSize);
+        // System.out.println("\tcwnd dec to " + congestionWindowSize);
     }
 }

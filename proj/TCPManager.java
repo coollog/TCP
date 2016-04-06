@@ -11,6 +11,8 @@
  * @version 1.0
  */
 public class TCPManager {
+    private static final boolean LOG = false;
+
     private Node node;
     private int addr;
     private Manager manager;
@@ -41,8 +43,14 @@ public class TCPManager {
 
     /** END SOCKET API **/
 
-    public void log(String text) { node.logOutput(text); }
-    public void logError(String text) { node.logError(text); }
+    public void log(String text) {
+        if (!LOG) return;
+        node.logOutput(text);
+    }
+    public void logError(String text) {
+        if (!LOG) return;
+        node.logError(text);
+    }
 
     public void send(int srcPort,
                      int destAddr,
@@ -68,11 +76,11 @@ public class TCPManager {
 
         String address =
             SocketManager.AddressPair.toString(srcAddr, srcPort, destPort);
-        node.logOutput("TCP Packet: " + address + " sent " + transport.getType());
+        log("TCP Packet: " + address + " sent " + transport.getType());
 
         TCPSock sock = sockMan.find(srcAddr, srcPort, destPort);
         if (sock == null) {
-            node.logError("Receive: Could not find socket for " + address);
+            logError("Receive: Could not find socket for " + address);
             return;
         }
 

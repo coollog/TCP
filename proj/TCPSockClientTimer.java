@@ -71,7 +71,7 @@ public class TCPSockClientTimer {
         estimatedRTT = 0.875 * estimatedRTT + 0.125 * sampleRTT;
         devRTT = 0.75 * devRTT + 0.25 * Math.abs(sampleRTT - estimatedRTT);
         timeoutInterval = (int)(estimatedRTT + 4 * devRTT) + 1;
-        System.out.println("\tnew timeout: " + timeoutInterval + " (" + sampleRTT + ")");
+        client.getSock().getManager().log("\tnew timeout: " + timeoutInterval + " (" + sampleRTT + ")");
     }
 
     // Starts the timer for timeoutInterval * timeoutMultiplier.
