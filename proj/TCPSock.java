@@ -225,17 +225,10 @@ public class TCPSock {
 
     /** END SOCKET API **/
 
-    public Node getNode() { return node; }
-    public int getMyAddr() { return node.getAddr(); }
-    public Manager getManager() { return node.getManager(); }
+    public TCPManager getManager() { return tcpMan; }
 
     public void send(int type, int window, int seqNum, byte[] payload) {
-        Transport transport =
-            new Transport(myPort, destPort, type, window, seqNum, payload);
-        node.sendSegment(node.getAddr(),
-                         destAddr,
-                         Protocol.TRANSPORT_PKT,
-                         transport.pack());
+        tcpMan.send(myPort, destAddr, destPort, type, window, seqNum, payload);
     }
 
     public void receive(int srcAddr, int srcPort, Transport transport) {

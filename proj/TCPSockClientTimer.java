@@ -21,7 +21,7 @@ public class TCPSockClientTimer {
         // If this timer is outdated, just return.
         if (id != currentId) return;
 
-        client.getSock().getNode().logOutput("Timer " + id + " timed out with multiplier " + timeoutMultiplier);
+        client.getSock().getManager().log("Timer " + id + " timed out with multiplier " + timeoutMultiplier);
 
         resend(timeoutMultiplier);
 
@@ -93,14 +93,12 @@ public class TCPSockClientTimer {
 
             // Add timer.
             client.getSock().getManager().addTimer(
-                client.getSock().getMyAddr(),
-                timeoutInterval * timeoutMultiplier,
-                callback);
+                timeoutInterval * timeoutMultiplier, callback);
 
-            client.getSock().getNode().logOutput("Added timer " + currentId + " with timeout " + timeoutInterval * timeoutMultiplier);
+            client.getSock().getManager().log("Added timer " + currentId + " with timeout " + timeoutInterval * timeoutMultiplier);
         } catch (Exception e) {
             currentId --;
-            client.getSock().getNode().logError("Timer could not be created!");
+            client.getSock().getManager().logError("Timer could not be created!");
             e.printStackTrace();
             return;
         }
@@ -112,11 +110,11 @@ public class TCPSockClientTimer {
         Segment segment = peekQueue();
         if (segment == null) {
             stop();
-            client.getSock().getNode().logOutput("Timeout/Resend: No segments on queue.");
+            client.getSock().getManager().log("Timeout/Resend: No segments on queue.");
             return;
         }
 
-        client.getSock().getNode().logOutput("Timeout/Resend: " + segment.getType() + ", " + segment.getSeqNum());
+        client.getSock().getManager().log("Timeout/Resend: " + segment.getType() + ", " + segment.getSeqNum());
 
         client.send(
             segment.getType(), segment.getSeqNum(), segment.getPayload());

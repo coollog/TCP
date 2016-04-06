@@ -19,7 +19,7 @@ public class TCPSockClient {
     }
 
     public void send(int type, byte[] payload) {
-        sock.getNode().logOutput("Send: " + type + ", " + nextSeqNum + ", " + payload.length);
+        sock.getManager().log("Send: " + type + ", " + nextSeqNum + ", " + payload.length);
 
         send(type, nextSeqNum, payload);
         incNextSeqNum(payload.length);
@@ -35,12 +35,12 @@ public class TCPSockClient {
     }
 
     public void receivedACKForSeqNum(int seqNum) {
-        sock.getNode().logOutput("\tReceived ACK for seqNum " + seqNum + ", current sendBase " + sendBase);
+        sock.getManager().log("\tReceived ACK for seqNum " + seqNum + ", current sendBase " + sendBase);
 
         int numACKed = 1;
 
         if (seqNum > sendBase) {
-            sock.getNode().logOutput("\tReceived ACK, updated sendBase from " + sendBase + " to " + seqNum);
+            sock.getManager().log("\tReceived ACK, updated sendBase from " + sendBase + " to " + seqNum);
 
             numACKed = setSendBase(seqNum);
             duplicateACKs = 0;
@@ -48,7 +48,7 @@ public class TCPSockClient {
             // If there are currently any not-yet-acknowledged segments,
             // start timer.
             if (nextSeqNum > sendBase) {
-                sock.getNode().logOutput("Still has unACKed segments till " + nextSeqNum);
+                sock.getManager().log("Still has unACKed segments till " + nextSeqNum);
 
                 timer.start();
             }
@@ -60,7 +60,7 @@ public class TCPSockClient {
             if (duplicateACKs == 3) {
                 duplicateACKs = 0;
 
-                sock.getNode().logOutput("TCP fast retransmit:");
+                sock.getManager().log("TCP fast retransmit:");
                 timer.resend();
 
                 slowDecreaseCongestionWindowSize();

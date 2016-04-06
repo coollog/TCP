@@ -41,6 +41,24 @@ public class TCPManager {
 
     /** END SOCKET API **/
 
+    public void log(String text) { node.logOutput(text); }
+    public void logError(String text) { node.logError(text); }
+
+    public void send(int srcPort,
+                     int destAddr,
+                     int destPort,
+                     int type,
+                     int window,
+                     int seqNum,
+                     byte[] payload) {
+        Transport transport =
+            new Transport(srcPort, destPort, type, window, seqNum, payload);
+        node.sendSegment(node.getAddr(),
+                         destAddr,
+                         Protocol.TRANSPORT_PKT,
+                         transport.pack());
+    }
+
     public void receive(int srcAddr,
                         int srcPort,
                         int destAddr,
@@ -74,5 +92,9 @@ public class TCPManager {
     }
     public boolean unbind(int srcAddr, int srcPort, int destPort) {
         return sockMan.unassign(srcAddr, srcPort, destPort);
+    }
+
+    public void addTimer(long deltaT, Callback callback) {
+        node.getManager().addTimer(addr, deltaT, callback);
     }
 }
