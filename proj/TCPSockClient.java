@@ -5,39 +5,36 @@ public class TCPSockClient {
     private int sendBase;
     private int windowSize = TCPSockServerClient.READ_BUFFER_SIZE;
     private int congestionWindowSize = Transport.MAX_PAYLOAD_SIZE;
-    private int destAddr;
-    private int destPort;
-
-    private int seqNumFIN = -1; // -1 means it is not set.
 
     private TCPSockClientTimer timer = new TCPSockClientTimer(this);
     private int duplicateACKs = 0;
 
-    public TCPSockClient(int destAddr, int destPort) {
+    private TCPSock sock;
+
+    public TCPSockClient(TCPSock sock) {
         // Initialize client variables.
         nextSeqNum = generateSeqNum();
         sendBase = nextSeqNum;
-        this.destAddr = destAddr;
-        this.destPort = destPort;
+        this.sock = sock;
     }
 
-    public void send(TCPSock sock, int type, byte[] payload) {
+    public void send(int type, byte[] payload) {
         sock.getNode().logOutput("Send: " + type + ", " + nextSeqNum + ", " + payload.length);
 
-        send(sock, type, nextSeqNum, payload);
+        send(type, nextSeqNum, payload);
         incNextSeqNum(payload.length);
     }
-    public void send(TCPSock sock, int type, int seqNum, byte[] payload) {
-        sock.send(type, windowSize, seqNum, payload);
+    public void send(int type, int seqNum, byte[] payload) {
+        sock.send(type, 0, seqNum, payload);
 
         // Add segment to the queue waiting for ACK.
         timer.addToQueue(type, seqNum, payload);
 
         // Start timer.
-        if (!timer.isRunning()) timer.start(sock);
+        if (!timer.isRunning()) timer.start();
     }
 
-    public void receivedACKForSeqNum(TCPSock sock, int seqNum) {
+    public void receivedACKForSeqNum(int seqNum) {
         sock.getNode().logOutput("\tReceived ACK for seqNum " + seqNum + ", current sendBase " + sendBase);
 
         int numACKed = 1;
@@ -53,7 +50,7 @@ public class TCPSockClient {
             if (nextSeqNum > sendBase) {
                 sock.getNode().logOutput("Still has unACKed segments till " + nextSeqNum);
 
-                timer.start(sock);
+                timer.start();
             }
         } else { // A duplicate ACK received.
             // Increment number of duplicate ACKs.
@@ -64,7 +61,7 @@ public class TCPSockClient {
                 duplicateACKs = 0;
 
                 sock.getNode().logOutput("TCP fast retransmit:");
-                timer.resend(sock);
+                timer.resend();
 
                 slowDecreaseCongestionWindowSize();
             }
@@ -74,16 +71,13 @@ public class TCPSockClient {
         increaseCongestionWindowSize(numACKed);
     }
 
+    public TCPSock getSock() { return sock; }
     public int getNextSeqNum() { return nextSeqNum; }
     public int getSendBase() { return sendBase; }
     public int getWindowSize() { return windowSize; }
-    public int getDestAddr() { return destAddr; }
-    public int getDestPort() { return destPort; }
-    public int getSeqNumFIN() { return seqNumFIN; }
     public void incNextSeqNum(int amount) { nextSeqNum += amount; }
     public void setNextSeqNum(int seqNum) { nextSeqNum = seqNum; }
     public void setWindowSize(int windowSize) { this.windowSize = windowSize; }
-    public void setSeqNumFIN(int seqNum) { seqNumFIN = seqNum; }
 
     // Flow Control: Gets the number of bytes that still can be sent.
     //               We can always send >=1 byte.

@@ -6,7 +6,23 @@ public class TCPSockServerClient {
     private Segment.Buffer segmentBuffer = new Segment.Buffer();
     private ByteBuffer readBuffer = ByteBuffer.allocate(READ_BUFFER_SIZE);
 
+    private int nextSeqNum;
+    private int seqNumFIN = -1; // -1 means it is not set.
+
+    private TCPSock sock;
+
+    public TCPSockServerClient(TCPSock sock) {
+        this.sock = sock;
+    }
+
     public int getReceiveWindow() { return readBuffer.remaining(); }
+
+    public void sendACK() {
+        sock.send(Transport.ACK, getReceiveWindow(), nextSeqNum, TCPSock.dummy);
+    }
+    public void sendACKForFIN() {
+        sock.send(Transport.ACK, getReceiveWindow(), seqNumFIN, TCPSock.dummy);
+    }
 
     // Segment buffer functions.
     public void bufferSegment(int seqNum, byte[] payload) {
@@ -15,14 +31,12 @@ public class TCPSockServerClient {
     /**
      * Delivers consecutive segments in segmentBuffer into the readbuffer.
      * Only call this if the first segment has been ACK'd.
-     *
-     * @return # bytes unloaded into readBuffer.
      */
-    public int unloadSegmentBuffer() {
+    public void unloadSegmentBuffer() {
         int byteCount = 0;
 
         int firstSeqNum = segmentBuffer.peekSeqNum();
-        if (firstSeqNum == -1) return 0;
+        if (firstSeqNum == -1) return;
 
         Segment lastSegment = new Segment(firstSeqNum, TCPSock.dummy);
 
@@ -41,7 +55,8 @@ public class TCPSockServerClient {
             } else break;
         }
 
-        return byteCount;
+        // Increment the seqNum by the amount unloaded.
+        incNextSeqNum(byteCount);
     }
 
     public int read(byte[] buf, int pos, int len) {
@@ -52,4 +67,10 @@ public class TCPSockServerClient {
 
         return bytesRead;
     }
+
+    public int getNextSeqNum() { return nextSeqNum; }
+    public int getSeqNumFIN() { return seqNumFIN; }
+    public void setSeqNumFIN(int seqNum) { seqNumFIN = seqNum; }
+    public void incNextSeqNum(int amount) { nextSeqNum += amount; }
+    public void setNextSeqNum(int seqNum) { nextSeqNum = seqNum; }
 }
