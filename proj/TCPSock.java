@@ -358,17 +358,15 @@ public class TCPSock {
 
         node.logOutput("Received data (" + transport.getPayload().length + ") with seqNum " + transport.getSeqNum());
 
-        if (client.getNextSeqNum() == transport.getSeqNum()) {
-            int prevSeqNum = client.getNextSeqNum();
+        int prevSeqNum = client.getNextSeqNum();
 
+        if (client.getNextSeqNum() == transport.getSeqNum()) {
             // Segment received is in-order.
             // Deliver all consecutive received segments and ACK for last
             // delivered segment.
             serverClient.bufferSegment(
                 transport.getSeqNum(), transport.getPayload());
             client.incNextSeqNum(serverClient.unloadSegmentBuffer());
-
-            node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + prevSeqNum + " and ackSeqNum " + client.getNextSeqNum());
         } else if (client.getNextSeqNum() < transport.getSeqNum()) {
             // Segment received is out-of-order.
             // Queue up the segment.
@@ -376,7 +374,7 @@ public class TCPSock {
                 transport.getSeqNum(), transport.getPayload());
         } else {
             // Segment received is old, ignore.
-            return;
+            // return;
         }
 
         // Send an ACK no matter what.
@@ -384,6 +382,7 @@ public class TCPSock {
              serverClient.getReceiveWindow(),
              client.getNextSeqNum(),
              dummy);
+        node.logOutput("Sent ACK for data (" + transport.getPayload().length + ") with seqNum " + prevSeqNum + " and ackSeqNum " + client.getNextSeqNum());
 
         // Check if ACK needs to be sent for FIN if in SHUTDOWN.
         sendACKForFIN();

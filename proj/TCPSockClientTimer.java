@@ -9,7 +9,7 @@ public class TCPSockClientTimer {
     private int timeoutInterval = DEFAULT_TIMEOUT;
     private double estimatedRTT = DEFAULT_TIMEOUT;
     private double devRTT = 0;
-    private long lastStartTime;
+    private long currentId = 0;
 
     private TCPSockClient client;
 
@@ -18,25 +18,20 @@ public class TCPSockClientTimer {
     }
 
     public void timeout(TCPSock sock,
-                        Long startTime,
+                        Long id,
                         Integer timeoutMultiplier) {
         // If this timer is outdated, just return.
-        if (startTime != lastStartTime) return;
+        if (id != currentId) return;
 
-        Segment segment = peekQueue();
-        if (segment == null) {
-            stop();
-            sock.getNode().logOutput("Timeout: No segments on queue.");
-            return;
-        }
+        sock.getNode().logOutput("Timer " + id + " timed out with multiplier " + timeoutMultiplier);
 
-        sock.getNode().logOutput("Timeout resend: " + segment.getType() + ", " + segment.getSeqNum());
+        // estimatedRTT *= 2;
+        resend(sock, timeoutMultiplier);
 
-        client.send(
-            sock, segment.getType(), segment.getSeqNum(), segment.getPayload());
-
-        start(sock, timeoutMultiplier * 2);
+        client.decreaseCongestionWindowSize();
     }
+
+    public void resend(TCPSock sock) { resend(sock, 1); }
 
     public void start(TCPSock sock) { start(sock, 1); }
     public void stop() { running = false; }
@@ -47,7 +42,8 @@ public class TCPSockClientTimer {
     }
     // Removes from segmentQueue all segments with seqNum < nextSeqNum.
     // Also gets the sampleRTTs and recalculates the timeoutInterval.
-    public void pruneQueue(int nextSeqNum) {
+    // @return Number of segments pruned.
+    public int pruneQueue(int nextSeqNum) {
         // This holds all seqNums pruned mapped to a sampleRTT. If any seqNum is
         // encountered twice, we set the sampleRTT to -1 to invalidate it.
         // (ie. we do not use any sampleRTT for retransmitted segments)
@@ -69,29 +65,30 @@ public class TCPSockClientTimer {
             if (sampleRTT == -1) continue;
             recalculateTimeoutInterval(sampleRTT);
         }
+
+        return sampleRTTMap.size();
     }
     public Segment peekQueue() { return segmentQueue.peek(); }
 
     private void recalculateTimeoutInterval(int sampleRTT) {
         estimatedRTT = 0.875 * estimatedRTT + 0.125 * sampleRTT;
         devRTT = 0.75 * devRTT + 0.25 * Math.abs(sampleRTT - estimatedRTT);
-        timeoutInterval = (int)(estimatedRTT + 4 * devRTT);
+        timeoutInterval = (int)(estimatedRTT + 4 * devRTT) + 1;
         System.out.println("\tnew timeout: " + timeoutInterval + " (" + sampleRTT + ")");
     }
 
     // Starts the timer for timeoutInterval * timeoutMultiplier.
     private void start(TCPSock sock, Integer timeoutMultiplier) {
-        // Get smallest not-yet-acknowledged segment.
-        int seqNumMin = segmentQueue.peekSeqNum();
-        if (seqNumMin == -1) return;
+        // Make sure the queue has something.
+        if (segmentQueue.peekSeqNum() == -1) return;
 
         // Keep track of the latest timer.
-        lastStartTime = System.nanoTime();
+        currentId ++;
 
         // Construct callback parameters.
         String[] paramTypes =
             { "TCPSock", "java.lang.Long", "java.lang.Integer" };
-        Object[] params = { sock, lastStartTime, timeoutMultiplier };
+        Object[] params = { sock, currentId, timeoutMultiplier };
 
         // Construct callback.
         try {
@@ -101,12 +98,31 @@ public class TCPSockClientTimer {
             // Add timer.
             sock.getManager().addTimer(
                 sock.getMyAddr(), timeoutInterval * timeoutMultiplier, callback);
+
+            sock.getNode().logOutput("Added timer " + currentId + " with timeout " + timeoutInterval * timeoutMultiplier);
         } catch (Exception e) {
+            currentId --;
             sock.getNode().logError("Timer could not be created!");
             e.printStackTrace();
             return;
         }
 
         running = true;
+    }
+
+    private void resend(TCPSock sock, Integer timeoutMultiplier) {
+        Segment segment = peekQueue();
+        if (segment == null) {
+            stop();
+            sock.getNode().logOutput("Timeout/Resend: No segments on queue.");
+            return;
+        }
+
+        sock.getNode().logOutput("Timeout/Resend: " + segment.getType() + ", " + segment.getSeqNum());
+
+        client.send(
+            sock, segment.getType(), segment.getSeqNum(), segment.getPayload());
+
+        start(sock, timeoutMultiplier * 2);
     }
 }
