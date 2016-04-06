@@ -1,7 +1,7 @@
 import java.nio.*;
 
 public class TCPSockServerClient {
-    public static final int READ_BUFFER_SIZE = 10; //0x4000;
+    public static final int READ_BUFFER_SIZE = 0x4000;
 
     private Segment.Buffer segmentBuffer = new Segment.Buffer();
     private ByteBuffer readBuffer = ByteBuffer.allocate(READ_BUFFER_SIZE);

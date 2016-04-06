@@ -9,6 +9,7 @@ public class TCPSockClientTimer {
     private int timeoutInterval = DEFAULT_TIMEOUT;
     private double estimatedRTT = DEFAULT_TIMEOUT;
     private double devRTT = 0;
+    private long lastStartTime;
 
     private TCPSockClient client;
 
@@ -16,7 +17,12 @@ public class TCPSockClientTimer {
         this.client = client;
     }
 
-    public void timeout(TCPSock sock, Integer seqNum) {
+    public void timeout(TCPSock sock,
+                        Long startTime,
+                        Integer timeoutMultiplier) {
+        // If this timer is outdated, just return.
+        if (startTime != lastStartTime) return;
+
         Segment segment = peekQueue();
         if (segment == null) {
             stop();
@@ -24,45 +30,15 @@ public class TCPSockClientTimer {
             return;
         }
 
-        // // If the segment has already been ACK'd, return.
-        // if (segment.getSeqNum() != seqNum) {
-        //     node.logOutput("Timeout: " + seqNum + "!=" + segment.getSeqNum());
-        //     return;
-        // }
-
         sock.getNode().logOutput("Timeout resend: " + segment.getType() + ", " + segment.getSeqNum());
 
         client.send(
             sock, segment.getType(), segment.getSeqNum(), segment.getPayload());
 
-        start(sock);
+        start(sock, timeoutMultiplier * 2);
     }
 
-    public void start(TCPSock sock) {
-        // Get smallest not-yet-acknowledged segment.
-        int seqNumMin = segmentQueue.peekSeqNum();
-        if (seqNumMin == -1) return;
-
-        // Construct callback parameters (just the seqNum).
-        String[] paramTypes = { "TCPSock", "java.lang.Integer" };
-        Object[] params = { sock, new Integer(seqNumMin) };
-
-        // Construct callback.
-        try {
-            Method method = Callback.getMethod("timeout", this, paramTypes);
-            Callback callback = new Callback(method, this, params);
-
-            // Add timer.
-            sock.getManager().addTimer(
-                sock.getMyAddr(), timeoutInterval, callback);
-        } catch (Exception e) {
-            sock.getNode().logError("Timer could not be created!");
-            e.printStackTrace();
-            return;
-        }
-
-        running = true;
-    }
+    public void start(TCPSock sock) { start(sock, 1); }
     public void stop() { running = false; }
     public boolean isRunning() { return running; }
 
@@ -101,5 +77,36 @@ public class TCPSockClientTimer {
         devRTT = 0.75 * devRTT + 0.25 * Math.abs(sampleRTT - estimatedRTT);
         timeoutInterval = (int)(estimatedRTT + 4 * devRTT);
         System.out.println("\tnew timeout: " + timeoutInterval + " (" + sampleRTT + ")");
+    }
+
+    // Starts the timer for timeoutInterval * timeoutMultiplier.
+    private void start(TCPSock sock, Integer timeoutMultiplier) {
+        // Get smallest not-yet-acknowledged segment.
+        int seqNumMin = segmentQueue.peekSeqNum();
+        if (seqNumMin == -1) return;
+
+        // Keep track of the latest timer.
+        lastStartTime = System.nanoTime();
+
+        // Construct callback parameters.
+        String[] paramTypes =
+            { "TCPSock", "java.lang.Long", "java.lang.Integer" };
+        Object[] params = { sock, lastStartTime, timeoutMultiplier };
+
+        // Construct callback.
+        try {
+            Method method = Callback.getMethod("timeout", this, paramTypes);
+            Callback callback = new Callback(method, this, params);
+
+            // Add timer.
+            sock.getManager().addTimer(
+                sock.getMyAddr(), timeoutInterval * timeoutMultiplier, callback);
+        } catch (Exception e) {
+            sock.getNode().logError("Timer could not be created!");
+            e.printStackTrace();
+            return;
+        }
+
+        running = true;
     }
 }
