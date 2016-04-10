@@ -1,6 +1,5 @@
 # Q’s TCP
-By Qingyang Chen
-TCP implementation for CPSC 433. Relevant files are under proj/.
+By Qingyang Chen. TCP implementation for CPSC 433. Relevant files are under proj/.
 
 # Classes
 
@@ -19,7 +18,7 @@ Depending on the type, TCPSock keeps an instance of either *TCPSockClient*, *TCP
 Encapsulates the methods and variables for a CLIENT-type socket. Mostly, it sends data, and waits for ACKs from the server side. Uses *TCPSockClientTimer* to handle timeouts.
 
 ## TCPSockClientTimer
-Maintains a segment queue of un-ACKed segments, and also manages a timer that whenever it times out, the first segment in the queue is resent. See *Segment.Buffer* for details on the segment queue.
+Maintains a segment queue of un-ACKed segments, and also manages a timer that whenever it times out, the first segment in the queue is resent. See *Segment.Buffer* for details on the segment queue. Only one timer is active, and any restarts of the timer invalidates any previously attached timeout event.
 
 ## TCPSockServer
 Encapsulates the methods and variables for a SERVER_LISTENER-type socket. Maintains a backlog queue of attempted connections that haven’t yet been accepted.
@@ -58,7 +57,7 @@ A priority queue of *Segment*s that orders the segments by their sequence number
 
 # Features
 
-## Timeout optimization
+## Timeout Optimization
 On the client side, upon receiving an ACK, a round-trip-time (sampleRTT) can be calculated for the ACKed segment (only valid if the segment was not resent). The timeout interval is then readjusted by:
 `estimatedRTT = 0.875 x estimatedRTT + 0.125 x sampleRTT
 devRTT = 0.75 x devRTT + 0.25 x | sampleRTT - estimatedRTT |
@@ -68,6 +67,11 @@ The default values are:
 devRTT = 0
 timeoutInterval = 1000 ms`
 
-TCP Fast retransmit
-Flow Control
-AIMD Congestion Control
+## TCP Fast Retransmit
+Upon receiving 3 duplicate ACKs, the first unACKed segment is resent. This helps to resend lost segments without waiting for the timer to timeout.
+
+## Flow Control
+The SERVER_CLIENT-type socket sends back a *window size* equal to how much space is left in the read buffer. The client uses this information to determine the maximum number of bytes it can still send (along with the *congestion window size* - see *AIMD Congestion Control*). A minimum of 1 byte is always sent. This helps to make sure the client does not overwhelm the server with new data.
+
+## AIMD Congestion Control
+The client maintains a *congestion window size* that is initially the maximum payload size. This window size is additively increased whenever an ACK is received, and multiplicatively decreased whenever the timer times out. The client uses this information to determine the maximum number of bytes it can still send (along with the *flow control window size* - see *Flow Control*). A minimum of 1 byte is always sent. This helps to make sure the client does not overwhelm the network with new data.
