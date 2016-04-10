@@ -3,11 +3,11 @@
  *
  * <p>Description: Fishnet TCP manager</p>
  *
- * <p>Copyright: Copyright (c) 2006</p>
+ * <p>Copyright: Copyright (c) 2016</p>
  *
  * <p>Company: Yale University</p>
  *
- * @author Hao Wang
+ * @author Qingyang Chen
  * @version 1.0
  */
 public class TCPManager {

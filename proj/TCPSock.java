@@ -1,8 +1,6 @@
 public class TCPSock {
     public static final byte dummy[] = new byte[0];
 
-    private static final int WINDOW_SIZE = 0x2000;
-
     // TCP socket states
     // UNBOUND - just created, must bind port now.
     // BOUND - port bound, but not connected/listening.
